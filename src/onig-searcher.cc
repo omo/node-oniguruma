@@ -1,8 +1,9 @@
 #include "onig-searcher.h"
+#include "onig-search-tracer.h"
 #include "onig-string-context.h"
 #include "unicode-utils.h"
 
-shared_ptr<OnigResult> OnigSearcher::Search(shared_ptr<OnigStringContext> source, int charOffset) {
+shared_ptr<OnigResult> OnigSearcher::Search(shared_ptr<OnigStringContext> source, int charOffset, OnigSearchTracer* tracer) {
   int byteOffset = charOffset;
   if (source->has_multibyte_characters()) {
 #ifdef _WIN32
@@ -16,10 +17,13 @@ shared_ptr<OnigResult> OnigSearcher::Search(shared_ptr<OnigStringContext> source
   shared_ptr<OnigResult> bestResult;
   cache.Init(source, byteOffset);
 
-  vector< shared_ptr<OnigRegExp> >::iterator iter = regExps.begin();
-  while (iter < regExps.end()) {
-    OnigRegExp *regExp = (*iter).get();
+  for (size_t i = 0; i < regExps.size(); ++i) {
+    OnigRegExp *regExp = regExps[i].get();
+    if (tracer)
+      tracer->WillSearch(i);
     shared_ptr<OnigResult> result = cache.Search(regExp, source, byteOffset);
+    if (tracer)
+      tracer->DidSearch(result.get());
     if (result != NULL && result->Count() > 0) {
       int location = result->LocationAt(0);
       if (source->has_multibyte_characters()) {
@@ -35,8 +39,6 @@ shared_ptr<OnigResult> OnigSearcher::Search(shared_ptr<OnigStringContext> source
         break;
       }
     }
-
-    ++iter;
   }
 
   return bestResult;

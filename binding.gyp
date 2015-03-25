@@ -95,6 +95,7 @@
         'src/onig-scanner.cc',
         'src/onig-scanner-worker.cc',
         'src/onig-searcher.cc',
+        'src/onig-search-tracer.cc',
         'src/onig-string-context.cc',
       ],
       'conditions': [

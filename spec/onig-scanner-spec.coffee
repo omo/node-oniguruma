@@ -105,3 +105,34 @@ describe "OnigScanner", ->
         runs ->
           expect(matchCallback.argsForCall[0][0]).toBeNull()
           expect(matchCallback.argsForCall[0][1].index).toBe 1
+
+    describe "::enableTracing", ->
+      it "makes findNextMatchSync attach tracing results to its result", ->
+        scanner = new OnigScanner(["1", "2"])
+        scanner.enableTracing(0)
+        slowSearches = scanner.findNextMatchSync("xxxx123", 0).slowSearches
+        expect(slowSearches.length).toBe 2
+        expect(slowSearches[0].index).toBe 0
+        expect(slowSearches[0].pattern).toBe "1"
+        expect(slowSearches[0].duration).toEqual jasmine.any(Number)
+        expect(slowSearches[1].index).toBe 1
+        expect(slowSearches[1].pattern).toBe "2"
+        expect(slowSearches[1].duration).toEqual jasmine.any(Number)
+
+      it "doesn't have any effect unless enabled", ->
+        scanner = new OnigScanner(["1", "2"])
+        expect(scanner.findNextMatchSync("xxxx123", 0).slowSearches).toBeUndefined
+
+      describe "when it is enabled", ->
+        it "has non-empty slowSearches only if it is actually slow", ->
+          longEnoughThreshold = 10
+          scanner = new OnigScanner(["1", "2"])
+          scanner.enableTracing(longEnoughThreshold)
+          expect(scanner.findNextMatchSync("xxxx123", 0).slowSearches.length).toBe 0
+
+        it "has provides matched indices if any", ->
+          scanner = new OnigScanner(["1", "y"])
+          scanner.enableTracing(0)
+          slowSearches = scanner.findNextMatchSync("xxxx123", 0).slowSearches
+          expect(slowSearches[0].matchedAt).toBe 4
+          expect(slowSearches[1].matchedAt).toBe null

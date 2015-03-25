@@ -21,6 +21,10 @@ OnigScanner::findNextMatchSync = (string, startPosition=0) ->
   match?.scanner = this
   match
 
+OnigScanner::enableTracing = (slownessThreshold=0) ->
+  slownessThreshold = @convertToNumber(slownessThreshold)
+  @_enableTracing(slownessThreshold)
+
 OnigScanner::convertToString = (value) ->
   if value is undefined
     'undefined'

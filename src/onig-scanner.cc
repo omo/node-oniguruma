@@ -1,4 +1,5 @@
 #include "onig-scanner.h"
+#include "onig-search-tracer.h"
 #include "onig-string-context.h"
 #include "onig-reg-exp.h"
 #include "onig-result.h"
@@ -17,6 +18,7 @@ void OnigScanner::Init(Handle<Object> target) {
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
   tpl->PrototypeTemplate()->Set(NanNew<String>("_findNextMatch"), NanNew<FunctionTemplate>(OnigScanner::FindNextMatch)->GetFunction());
   tpl->PrototypeTemplate()->Set(NanNew<String>("_findNextMatchSync"), NanNew<FunctionTemplate>(OnigScanner::FindNextMatchSync)->GetFunction());
+  tpl->PrototypeTemplate()->Set(NanNew<String>("_enableTracing"), NanNew<FunctionTemplate>(OnigScanner::EnableTracing)->GetFunction());
 
   target->Set(NanNew<String>("OnigScanner"), tpl->GetFunction());
 }
@@ -43,7 +45,21 @@ NAN_METHOD(OnigScanner::FindNextMatch) {
   NanReturnUndefined();
 }
 
-OnigScanner::OnigScanner(Handle<Array> sources) {
+NAN_METHOD(OnigScanner::EnableTracing) {
+  NanScope();
+  OnigScanner* scanner = node::ObjectWrap::Unwrap<OnigScanner>(args.This());
+  scanner->EnableTracing(Local<Number>::Cast(args[0]));
+  NanReturnUndefined();
+}
+
+OnigScanner::OnigScanner(Handle<Array> sources)
+    // FIXME: All these ifdefs are mess. We should have some compatibility layer
+    // on NAN module to hide these API incompatibilities.
+#if (0 == NODE_MAJOR_VERSION && 11 <= NODE_MINOR_VERSION) || (1 <= NODE_MAJOR_VERSION)
+  : sources(Isolate::GetCurrent(), sources) {
+#else
+  : sources(Persistent<Array>::New(sources)) {
+#endif
   int length = sources->Length();
   regExps.resize(length);
 
@@ -73,15 +89,21 @@ Handle<Value> OnigScanner::FindNextMatchSync(Handle<String> v8String, Handle<Num
     lastSource = shared_ptr<OnigStringContext>(new OnigStringContext(v8String));
   int charOffset = v8StartLocation->Value();
 
-  shared_ptr<OnigResult> bestResult = searcher->Search(lastSource, charOffset);
+  shared_ptr<OnigResult> bestResult = searcher->Search(lastSource, charOffset, searchTracer.get());
   if (bestResult != NULL) {
     Local<Object> result = NanNew<Object>();
     result->Set(NanNew<String>("index"), NanNew<Number>(bestResult->Index()));
     result->Set(NanNew<String>("captureIndices"), CaptureIndicesForMatch(bestResult.get(), lastSource));
+    if (searchTracer)
+      result->Set(NanNew<String>("slowSearches"), SlowSearches(searchTracer.get()));
     return result;
   } else {
     return NanNull();
   }
+}
+
+void OnigScanner::EnableTracing(Handle<Number> v8SlownessThreshold) {
+  searchTracer.reset(new OnigSearchTracer(v8SlownessThreshold->Value()));
 }
 
 Handle<Value> OnigScanner::CaptureIndicesForMatch(OnigResult* result, shared_ptr<OnigStringContext> source) {
@@ -106,4 +128,30 @@ Handle<Value> OnigScanner::CaptureIndicesForMatch(OnigResult* result, shared_ptr
   }
 
   return captures;
+}
+
+Handle<Value> OnigScanner::SlowSearches(OnigSearchTracer* tracer) const {
+  size_t count = tracer->SlowSearchCount();
+  Local<Array> slowSearches = NanNew<Array>(count);
+
+#if (0 == NODE_MAJOR_VERSION && 11 <= NODE_MINOR_VERSION) || (1 <= NODE_MAJOR_VERSION)
+  Local<Array> localSources = Local<Array>::New(Isolate::GetCurrent(), sources);
+#else
+  Local<Array> localSources = Local<Array>::New(sources);
+#endif
+
+  for (size_t i = 0; i < count; ++i) {
+    Local<Object> traceValue = NanNew<Object>();
+    const OnigSearchTracer::Trace& trace = tracer->SlowSearchAt(i);
+    traceValue->Set(NanNew<String>("index"), NanNew<Number>(trace.index));
+    traceValue->Set(NanNew<String>("pattern"), localSources->Get(trace.index));
+    if (trace.DidMatch())
+      traceValue->Set(NanNew<String>("matchedAt"), NanNew<Number>(trace.matchedAt));
+    else
+      traceValue->Set(NanNew<String>("matchedAt"), NanNull());
+    traceValue->Set(NanNew<String>("duration"), NanNew<Number>(trace.duration));
+    slowSearches->Set(i, traceValue);
+  }
+
+  return slowSearches;
 }
